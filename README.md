@@ -9,9 +9,9 @@ Run the python script that will place the files in the right spot so that you ca
 
 Run the tracker and check the automatic box
 
-# Known Issues
+YOU DO NOT HAVE TO PIP INSTALL WATCHDOG it just makes it update like 5 seconds faster
 
-Something is wrong with the tracking of lost and found being obtained and tunnel? I will look more into it after the tourney but I've never actually played explorer% and minimal testing went into this sorry
+# Known Issues
 
 Tracker updates on end of day: Technically I have the capability to make it live but I do not think I will since dogubomb seems to be adding official tracking at some point
 
