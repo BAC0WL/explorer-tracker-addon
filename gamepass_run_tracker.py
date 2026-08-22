@@ -6,7 +6,7 @@ Watches MtHollyBlueprint.es3 and updates two JSON files on every save write:
   - events.json   : bool/int fields from the save
   - drafts.json   : per-room global draft counts from RoomRecords
 
-Edit SAVE_PATH and OUTPUT_DIR below, then run:
+Edit SAVE_DIR and OUTPUT_DIR below, then run:
     python3 run_tracker.py
 """
 
@@ -27,12 +27,14 @@ KEY_STRING = (
 # ── Paths — edit these two to match your setup ────────────────────────────────
 
 
-#PATH TO SAVE FILE JUST DM ME TO HELP 
-SAVE_PATH = os.path.expandvars(
-    r'C:\Users\[USERNAME]\AppData\Local\Packages\RawFury.BluePrince_9s0pnehqffj7t\SystemAppData\wgs\000901F39906ACFA_0000000000000000000000007D0295B9\C0E8BF09D7A746458CBD6649D24C79DFI'
+#PATH TO THE SAVE *FOLDER* JUST DM ME TO HELP
+# The Game Pass save file is a randomly-named GUID that changes, so point at the
+# folder instead — the tracker always picks the largest file inside it and if that's wrong unlucky
+SAVE_DIR = os.path.expandvars(
+    r'C:\Users\[USERNAME]\AppData\Local\Packages\RawFury.BluePrince_9s0pnehqffj7t\SystemAppData\wgs\000901F39906ACFA_0000000000000000000000007D0295B9'
 )
 
-#WHERE YOU WANT THE TWO JSON FILES TO GO, IT CAN BE ANY FOLDER BUT MAKE SURE YOU PUT THAT SAME FOLDER IN PIXIES TRACKER
+#WHERE YOU WANT THE TWO JSON FILES TO GO, IT CAN BE ANY FOLDER BUT MAKE SURE YOU PUT THAT SAME FOLDER IN PIXIES TRACKER AND HIT SAVE
 OUTPUT_DIR = r'C:\Program Files (x86)\Steam\steamapps\common\Blue Prince'
 
 
@@ -146,6 +148,30 @@ def _aes_encrypt_block(block: bytes, rk: list) -> bytes:
 def _derive_key(salt: bytes) -> bytes:
     import hashlib
     return hashlib.pbkdf2_hmac('sha1', KEY_STRING.encode('utf-8'), salt, 100, dklen=16)
+
+
+def find_largest_file(directory: str) -> str:
+    """Return the path of the largest regular file directly inside `directory`.
+
+    Game Pass stores the save under a GUID name that changes between writes, and
+    keeps small metadata files (container.*) alongside it, so the biggest file in
+    the folder is the actual save blob.
+    """
+    best      = None
+    best_size = -1
+    for name in os.listdir(directory):
+        path = os.path.join(directory, name)
+        try:
+            if not os.path.isfile(path):
+                continue
+            size = os.path.getsize(path)
+        except OSError:
+            continue
+        if size > best_size:
+            best, best_size = path, size
+    if best is None:
+        raise FileNotFoundError(f"No files found in save folder: {directory}")
+    return best
 
 
 def decrypt_es3(path: str) -> str:
@@ -459,7 +485,7 @@ def write_json(path: str, data):
 
 # ── Main tracker ──────────────────────────────────────────────────────────────
 
-def run_tracker(save_path: str, out_dir: str):
+def run_tracker(save_dir: str, out_dir: str):
     events_path = os.path.join(out_dir, 'events.json')
     drafts_path = os.path.join(out_dir, 'drafts.json')
 
@@ -467,7 +493,8 @@ def run_tracker(save_path: str, out_dir: str):
     slot_num    = active_slot.replace('BluePrint', '') or '1'
 
     print(f"\nSlot:         {active_slot}")
-    print(f"Watching:     {save_path}")
+    print(f"Watching:     {save_dir}")
+    print("              (largest file in folder is used as the save)")
     print(f"Events JSON:  {events_path}")
     print(f"Drafts JSON:  {drafts_path}")
     print("Press Ctrl+C to stop.\n")
@@ -475,6 +502,7 @@ def run_tracker(save_path: str, out_dir: str):
 
     def process_save():
         try:
+            save_path    = find_largest_file(save_dir)
             plaintext    = decrypt_es3(save_path)
             slot_fields  = parse_slot_fields(plaintext)
             fields       = slot_fields.get(active_slot, {})
@@ -515,17 +543,22 @@ def run_tracker(save_path: str, out_dir: str):
     # Initial read on startup
     process_save()
 
-    save_dir = os.path.dirname(save_path)
-
     try:
         from watchdog.observers import Observer
         from watchdog.events import FileSystemEventHandler
 
         class Handler(FileSystemEventHandler):
-            def on_modified(self, event):
-                if os.path.basename(save_path) in os.path.basename(event.src_path):
-                    time.sleep(0.3)  # wait for game to finish writing
-                    process_save()
+            # The save is rewritten under a new random name, so react to any
+            # file event in the folder and re-pick the largest file.
+            def _touched(self, event):
+                if event.is_directory:
+                    return
+                time.sleep(0.3)  # wait for game to finish writing
+                process_save()
+
+            on_modified = _touched
+            on_created  = _touched
+            on_moved    = _touched
 
         observer = Observer()
         observer.schedule(Handler(), path=save_dir, recursive=False)
@@ -543,18 +576,24 @@ def run_tracker(save_path: str, out_dir: str):
         print("(watchdog not installed — polling every second)")
         print("Install for instant notifications:  pip install watchdog\n")
 
-        last_mtime = os.path.getmtime(save_path)
+        def save_signature():
+            """(path, mtime, size) of the largest file — any change means a new save."""
+            try:
+                path = find_largest_file(save_dir)
+                st   = os.stat(path)
+                return (path, st.st_mtime, st.st_size)
+            except (OSError, FileNotFoundError):
+                return None
+
+        last_sig = save_signature()
         try:
             while True:
                 time.sleep(1)
-                try:
-                    mtime = os.path.getmtime(save_path)
-                    if mtime != last_mtime:
-                        last_mtime = mtime
-                        time.sleep(0.3)
-                        process_save()
-                except FileNotFoundError:
-                    pass
+                sig = save_signature()
+                if sig is not None and sig != last_sig:
+                    last_sig = sig
+                    time.sleep(0.3)
+                    process_save()
         except KeyboardInterrupt:
             pass
 
@@ -564,9 +603,17 @@ def run_tracker(save_path: str, out_dir: str):
 # ── CLI ───────────────────────────────────────────────────────────────────────
 
 def main():
-    if not os.path.isfile(SAVE_PATH):
-        print(f"ERROR: Save file not found: {SAVE_PATH}")
+    if not os.path.isdir(SAVE_DIR):
+        print(f"ERROR: Save folder not found: {SAVE_DIR}")
         sys.exit(1)
+
+    try:
+        largest = find_largest_file(SAVE_DIR)
+    except FileNotFoundError as e:
+        print(f"ERROR: {e}")
+        sys.exit(1)
+    print(f"Save file (largest in folder): {os.path.basename(largest)}"
+          f"  ({os.path.getsize(largest):,} bytes)")
 
     if not os.path.isdir(OUTPUT_DIR):
         print(f"Output directory not found: {OUTPUT_DIR}")
@@ -576,7 +623,7 @@ def main():
         else:
             sys.exit(1)
 
-    run_tracker(SAVE_PATH, OUTPUT_DIR)
+    run_tracker(SAVE_DIR, OUTPUT_DIR)
 
 
 if __name__ == '__main__':
