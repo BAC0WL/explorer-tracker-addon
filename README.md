@@ -9,13 +9,16 @@ Run the python script that will place the files in the right spot so that you ca
 
 Run the tracker and check the automatic box
 
-YOU DO NOT HAVE TO PIP INSTALL WATCHDOG it just makes it update like 5 seconds faster
+YOU DO NOT HAVE TO PIP INSTALL WATCHDOG it just makes it update like 1 second faster
 
 # Known Issues
 
 Tracker updates on end of day: Technically I have the capability to make it live but I do not think I will since dogubomb seems to be adding official tracking at some point
 
 Gamepass/mac versions won't work as of now, I am not sure if it's a limitation of my tracker or Pixie's 
+
 edit: Gamepass might work now
+
+edit 2: Gamepass is weird it still doesn't work will get there (mabey)
 
 If you have issues dm me
